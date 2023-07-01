@@ -4,13 +4,65 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <time.h>
 #include <vector>
 
 #define NDEBUG
+
+// External debug functions
+VkResult
+create_debug_utils_messenger_EXT(
+    VkInstance                                 instance,
+    const VkDebugUtilsMessengerCreateInfoEXT * p_create_info,
+    const VkAllocationCallbacks *              p_allocator,
+    VkDebugUtilsMessengerEXT *                 p_debug_messenger ) {
+    const auto func = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr( instance, "vkCreateDebugUtilsMessengerEXT" ) );
+
+    if ( func != nullptr ) {
+        return func( instance, p_create_info, p_allocator, p_debug_messenger );
+    }
+    else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+void
+destroy_debug_utils_messenger_EXT( VkInstance               instance,
+                                   VkDebugUtilsMessengerEXT debug_messenger,
+                                   const VkAllocationCallbacks * p_allocator ) {
+    const auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr( instance, "vkDestroyDebugUtilsMessengerEXT" ) );
+
+    if ( func != nullptr ) {
+        return func( instance, debug_messenger, p_allocator );
+    }
+}
+
+void
+populate_debug_messenger_create_info(
+    VkDebugUtilsMessengerCreateInfoEXT & create_info,
+    PFN_vkDebugUtilsMessengerCallbackEXT debug_callback ) {
+    create_info = VkDebugUtilsMessengerCreateInfoEXT{};
+    create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    create_info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
+        | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+        | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+                              | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+                              | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    create_info.pfnUserCallback = debug_callback;
+    create_info.pUserData = nullptr; // optional
+}
+
+// HelloTriangleApp class
 
 class HelloTriangleApp
 {
@@ -19,6 +71,7 @@ class HelloTriangleApp
                       const bool enable_validation_layers = false ) :
         m_width( width ),
         m_height( height ),
+        m_physical_device( VK_NULL_HANDLE ),
         m_enable_validation_layers( enable_validation_layers ) {}
     void run() {
         init_window();
@@ -31,11 +84,18 @@ class HelloTriangleApp
     uint32_t                        m_width, m_height;
     GLFWwindow *                    m_window;
     VkInstance                      m_instance;
+    VkDebugUtilsMessengerEXT        m_debug_messenger;
+    VkPhysicalDevice                m_physical_device;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
     };
 
+    struct QueueFamilyIndices
+    {
+        std::optional<uint32_t> graphics_family;
+        bool is_complete() { return graphics_family.has_value(); };
+    };
 
     void init_window() {
         glfwInit();
@@ -49,11 +109,19 @@ class HelloTriangleApp
         m_window =
             glfwCreateWindow( m_width, m_height, "Vulkan", nullptr, nullptr );
     }
-    void init_vulkan() { create_instance(); }
+    void init_vulkan() {
+        create_instance();
+        setup_debug_messenger();
+        pick_physical_device();
+    }
     void main_loop() {
         while ( !glfwWindowShouldClose( m_window ) ) { glfwPollEvents(); }
     }
     void cleanup() {
+        if ( m_enable_validation_layers ) {
+            destroy_debug_utils_messenger_EXT( m_instance, m_debug_messenger,
+                                               nullptr );
+        }
         vkDestroyInstance( m_instance, nullptr );
         glfwDestroyWindow( m_window );
         glfwTerminate();
@@ -63,19 +131,13 @@ class HelloTriangleApp
             return;
         }
 
-        VkDebugUtilsMessengerCreateInfoEXT create_info{};
-        create_info.sType =
-            VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        create_info.messageSeverity =
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        create_info.messageType =
-            VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        create_info.pfnUserCallback = debug_callback;
-        create_info.pUserData = nullptr; // optional
+        VkDebugUtilsMessengerCreateInfoEXT create_info;
+        populate_debug_messenger_create_info( create_info, debug_callback );
+
+        if ( create_debug_utils_messenger_EXT( m_instance, &create_info,
+                                               nullptr, &m_debug_messenger ) ) {
+            throw std::runtime_error( "Debug messenger setup failed." );
+        }
     }
 
     [[nodiscard]] auto check_validation_layer_support() {
@@ -152,13 +214,21 @@ class HelloTriangleApp
             static_cast<uint32_t>( extensions.size() );
         create_info.ppEnabledExtensionNames = extensions.data();
 
+        VkDebugUtilsMessengerCreateInfoEXT debug_create_info{};
         if ( m_enable_validation_layers ) {
             create_info.enabledLayerCount =
                 static_cast<uint32_t>( m_validation_layers.size() );
             create_info.ppEnabledLayerNames = m_validation_layers.data();
+
+            populate_debug_messenger_create_info( debug_create_info,
+                                                  debug_callback );
+            create_info.pNext =
+                reinterpret_cast<VkDebugUtilsMessengerCreateInfoEXT *>(
+                    &debug_create_info );
         }
         else {
             create_info.enabledLayerCount = 0;
+            create_info.pNext = nullptr;
         }
 
         // Create the Vulkan instance
@@ -175,7 +245,7 @@ class HelloTriangleApp
         VkDebugUtilsMessageSeverityFlagBitsEXT       message_severity,
         VkDebugUtilsMessageTypeFlagsEXT              message_type,
         const VkDebugUtilsMessengerCallbackDataEXT * p_callback_data,
-        void *                                       p_user_data ) {
+        void *                                       p_user_data ) noexcept {
         const time_t current_time{ time( NULL ) };
         const auto   time_str{ asctime( gmtime( &current_time ) ) };
 
@@ -190,6 +260,89 @@ class HelloTriangleApp
         }
 
         return VK_FALSE;
+    }
+    [[nodiscard]] int
+    rate_device_suitability( const VkPhysicalDevice device ) const noexcept {
+        VkPhysicalDeviceProperties device_properties;
+        vkGetPhysicalDeviceProperties( device, &device_properties );
+
+        VkPhysicalDeviceFeatures device_features;
+        vkGetPhysicalDeviceFeatures( device, &device_features );
+
+        int score{ 0 };
+        if ( device_properties.deviceType
+             == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) {
+            score += 1000;
+        }
+
+        // Maximum possible size of texture affects graphics quality.
+        score += device_properties.limits.maxImageDimension2D;
+
+        // Application can't function without geometry shaders.
+        if ( !device_features.geometryShader ) {
+            return 0;
+        }
+
+        return score;
+    }
+    void pick_physical_device() {
+        uint32_t device_count{ 0 };
+        vkEnumeratePhysicalDevices( m_instance, &device_count, nullptr );
+
+        if ( device_count == 0 ) {
+            throw std::runtime_error(
+                "Failed to find GPUs with Vulkan support." );
+        }
+
+        std::vector<VkPhysicalDevice> devices( device_count );
+        vkEnumeratePhysicalDevices( m_instance, &device_count, devices.data() );
+
+        // Ordered map to
+        std::multimap<int, VkPhysicalDevice> device_candidates;
+        for ( const auto & device : devices ) {
+            int score = rate_device_suitability( device );
+            device_candidates.insert( std::make_pair( score, device ) );
+        }
+
+        // Check if the best candidate is suitable at all
+        if ( device_candidates.rbegin()->first > 0 ) {
+            m_physical_device = device_candidates.rbegin()->second;
+        }
+        else {
+            std::runtime_error( "Failed to find suitable GPU." );
+        }
+    }
+    [[nodiscard]] struct QueueFamilyIndices
+    find_queue_families( VkPhysicalDevice device ) {
+        QueueFamilyIndices indices;
+
+        uint32_t queue_family_count{ 0 };
+        vkGetPhysicalDeviceQueueFamilyProperties( device, &queue_family_count,
+                                                  nullptr );
+
+        std::vector<VkQueueFamilyProperties> queue_families(
+            queue_family_count );
+        vkGetPhysicalDeviceQueueFamilyProperties( device, &queue_family_count,
+                                                  queue_families.data() );
+
+        int i{ 0 };
+        for ( const auto & queue_family : queue_families ) {
+            if ( queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT ) {
+                indices.graphics_family = i;
+            }
+
+            if ( indices.is_complete() ) {
+                break;
+            }
+
+            i++;
+        }
+
+        return indices;
+    }
+    [[nodiscard]] bool is_device_suitable( VkPhysicalDevice device ) {
+        QueueFamilyIndices indices{ find_queue_families( device ) };
+        return indices.is_complete();
     }
 };
 
