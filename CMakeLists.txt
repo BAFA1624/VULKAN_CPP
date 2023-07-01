@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Add -v to see full build details
-set(CMAKE_CXX_FLAGS_DEBUG "${LDFLAGS_DIR} -Wall -Wextra -pedantic -O0 -ggdb")
+set(CMAKE_CXX_FLAGS_DEBUG "${LDFLAGS_DIR} -v -Wall -Wextra -pedantic -O0 -ggdb")
 set(CMAKE_CXX_FLAGS_RELEASE "${LDFLAGS_DIR} -Wall -Wextra -pedantic -Werror -O3")
 
 add_subdirectory(src)
