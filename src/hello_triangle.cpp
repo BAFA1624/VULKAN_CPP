@@ -63,6 +63,67 @@ populate_debug_messenger_create_info(
     create_info.pUserData = nullptr; // optional
 }
 
+// Helper structs & related functions
+
+struct QueueFamilyIndices
+{
+    std::optional<uint32_t> m_graphics_family;
+    std::optional<uint32_t> m_present_family;
+
+    [[nodiscard]] constexpr auto is_complete() const noexcept {
+        return m_graphics_family.has_value() && m_present_family.has_value();
+    }
+
+    [[nodiscard]] constexpr auto graphics_family() const {
+        return m_graphics_family.value();
+    }
+    void graphics_family( const auto i ) noexcept { m_graphics_family = i; }
+
+    [[nodiscard]] constexpr auto present_family() const {
+        return m_present_family.value();
+    }
+    void present_family( const auto i ) noexcept { m_present_family = i; }
+};
+
+struct SwapChainSupportDetails
+{
+    VkSurfaceCapabilitiesKHR        capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR>   present_modes;
+};
+
+struct SwapChainSupportDetails
+query_swapchain_support( VkPhysicalDevice & device, VkSurfaceKHR & surface )
+{
+    SwapChainSupportDetails details;
+
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR( device, surface,
+                                               &details.capabilities );
+
+    uint32_t format_count{ 0 };
+    vkGetPhysicalDeviceSurfaceFormatsKHR( device, surface, &format_count,
+                                          nullptr );
+
+    if ( format_count != 0 ) {
+        details.formats.resize( format_count );
+        vkGetPhysicalDeviceSurfaceFormatsKHR( device, surface, &format_count,
+                                              details.formats.data() );
+    }
+
+    uint32_t present_mode_count;
+    vkGetPhysicalDeviceSurfacePresentModesKHR( device, surface,
+                                               &present_mode_count, nullptr );
+
+    if ( present_mode_count != 0 ) {
+        details.present_modes.resize( present_mode_count );
+        vkGetPhysicalDeviceSurfacePresentModesKHR(
+            device, surface, &present_mode_count,
+            details.present_modes.data() );
+    }
+
+    return details;
+}
+
 // HelloTriangleApp class
 
 class HelloTriangleApp
@@ -95,26 +156,8 @@ class HelloTriangleApp
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
     };
-
-    struct QueueFamilyIndices
-    {
-        std::optional<uint32_t> m_graphics_family;
-        std::optional<uint32_t> m_present_family;
-
-        [[nodiscard]] constexpr auto is_complete() const noexcept {
-            return m_graphics_family.has_value()
-                   && m_present_family.has_value();
-        }
-
-        [[nodiscard]] constexpr auto graphics_family() const {
-            return m_graphics_family.value();
-        }
-        void graphics_family( const auto i ) noexcept { m_graphics_family = i; }
-
-        [[nodiscard]] constexpr auto present_family() const {
-            return m_present_family.value();
-        }
-        void present_family( const auto i ) noexcept { m_present_family = i; }
+    const std::vector<const char *> m_device_extensions{
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 
     void init_window() {
@@ -200,13 +243,6 @@ class HelloTriangleApp
 
         if ( m_enable_validation_layers ) {
             extensions.push_back( VK_EXT_DEBUG_UTILS_EXTENSION_NAME );
-            // #ifdef __APPLE__
-            //             // Adding KHR surface extension &
-            //             MVK_MACOS_SURFACE_EXTENSION extensions.push_back(
-            //             VK_KHR_SURFACE_EXTENSION_NAME );
-            //             extensions.push_back(
-            //             VK_MVK_MACOS_SURFACE_EXTENSION_NAME );
-            // #endif
         }
 #ifdef __APPLE__
         extensions.emplace_back(
@@ -300,7 +336,9 @@ class HelloTriangleApp
         create_info.pQueueCreateInfos = queue_create_infos.data();
         create_info.queueCreateInfoCount = 1;
         create_info.pEnabledFeatures = &device_features;
-        create_info.enabledExtensionCount = 0;
+        create_info.enabledExtensionCount =
+            static_cast<uint32_t>( m_device_extensions.size() );
+        create_info.ppEnabledExtensionNames = m_device_extensions.data();
         if ( m_enable_validation_layers ) {
             create_info.enabledLayerCount =
                 static_cast<uint32_t>( m_validation_layers.size() );
@@ -347,8 +385,49 @@ class HelloTriangleApp
 
         return VK_FALSE;
     }
+    [[nodiscard]] const auto
+    check_device_extension_support( VkPhysicalDevice device ) const noexcept {
+        uint32_t extension_count;
+        vkEnumerateDeviceExtensionProperties( device, nullptr, &extension_count,
+                                              nullptr );
+
+        std::vector<VkExtensionProperties> available_extensions(
+            extension_count );
+        vkEnumerateDeviceExtensionProperties( device, nullptr, &extension_count,
+                                              available_extensions.data() );
+
+        std::set<std::string> required_extensions( m_device_extensions.begin(),
+                                                   m_device_extensions.end() );
+
+        for ( const auto & extension : available_extensions ) {
+            required_extensions.erase( extension.extensionName );
+        }
+
+        return required_extensions.empty();
+    }
+    [[nodiscard]] constexpr auto is_device_suitable( VkPhysicalDevice device ) {
+        QueueFamilyIndices indices{ find_queue_families( device ) };
+
+        const bool extensions_supported{ check_device_extension_support(
+            device ) };
+
+        bool swap_chain_adequate{ false };
+        if ( extensions_supported ) {
+            const auto swapchain_support{ query_swapchain_support(
+                device, m_surface ) };
+            swap_chain_adequate = !swapchain_support.formats.empty()
+                                  && !swapchain_support.present_modes.empty();
+        }
+
+        return indices.is_complete() && extensions_supported
+               && swap_chain_adequate;
+    }
     [[nodiscard]] int
     rate_device_suitability( const VkPhysicalDevice device ) noexcept {
+        if ( !is_device_suitable( device ) ) {
+            return 0;
+        }
+
         VkPhysicalDeviceProperties device_properties;
         vkGetPhysicalDeviceProperties( device, &device_properties );
 
@@ -356,6 +435,7 @@ class HelloTriangleApp
         vkGetPhysicalDeviceFeatures( device, &device_features );
 
         int score{ 0 };
+
         if ( device_properties.deviceType
              == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) {
             score += 1000;
@@ -441,9 +521,17 @@ class HelloTriangleApp
 
         return indices;
     }
-    [[nodiscard]] bool is_device_suitable( VkPhysicalDevice device ) {
-        QueueFamilyIndices indices{ find_queue_families( device ) };
-        return indices.is_complete();
+    [[nodiscard]] VkSurfaceFormatKHR choose_swap_surface_format(
+        const std::vector<VkSurfaceFormatKHR> & available_formats ) {
+        for ( const auto & available_format : available_formats ) {
+            if ( available_format.format == VK_FORMAT_B8G8R8A8_SRGB
+                 && available_format.colorSpace
+                        == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ) {
+                return available_format;
+            }
+        }
+
+        return available_formats[0];
     }
 };
 
