@@ -157,6 +157,9 @@ class HelloTriangleApp
     VkSurfaceKHR                    m_surface;
     VkQueue                         m_present_queue;
     VkSwapchainKHR                  m_swapchain;
+    std::vector<VkImage>            m_swapchain_images;
+    VkFormat                        m_swapchain_image_format;
+    VkExtent2D                      m_swapchain_extent;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
@@ -582,10 +585,12 @@ class HelloTriangleApp
 
         VkSurfaceFormatKHR surface_format =
             choose_swap_surface_format( swap_chain_support.formats );
+        m_swapchain_image_format = surface_format.format;
         VkPresentModeKHR present_mode =
             choose_swap_present_mode( swap_chain_support.present_modes );
         VkExtent2D extent =
             choose_swap_extent( swap_chain_support.capabilities );
+        m_swapchain_extent = extent;
 
         std::uint32_t image_count{ std::clamp(
             swap_chain_support.capabilities.minImageCount + 5,
@@ -631,6 +636,11 @@ class HelloTriangleApp
              != VK_SUCCESS ) {
             throw std::runtime_error( "Failed to create swapchain." );
         }
+
+        vkGetSwapchainImagesKHR( m_device, m_swapchain, &image_count, nullptr );
+        m_swapchain_images.resize( image_count );
+        vkGetSwapChainImages.KHR( m_device, m_swapchain, &image_count,
+                                  m_swapchain_images.data() );
     }
 };
 
