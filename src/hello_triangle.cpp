@@ -1,11 +1,15 @@
 #define GLFW_INCLUDE_VULKAN
 #include "GLFW/glfw3.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -152,6 +156,7 @@ class HelloTriangleApp
     VkQueue                         m_graphics_queue;
     VkSurfaceKHR                    m_surface;
     VkQueue                         m_present_queue;
+    VkSwapchainKHR                  m_swapchain;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
@@ -178,11 +183,13 @@ class HelloTriangleApp
         create_surface();
         pick_physical_device();
         create_logical_device();
+        create_swap_chain();
     }
     void main_loop() {
         while ( !glfwWindowShouldClose( m_window ) ) { glfwPollEvents(); }
     }
     void cleanup() {
+        vkDestroySwapchainKHR( m_device, m_swapchain, nullptr );
         vkDestroyDevice( m_device, nullptr );
         if ( m_enable_validation_layers ) {
             destroy_debug_utils_messenger_EXT( m_instance, m_debug_messenger,
@@ -339,6 +346,7 @@ class HelloTriangleApp
         create_info.enabledExtensionCount =
             static_cast<uint32_t>( m_device_extensions.size() );
         create_info.ppEnabledExtensionNames = m_device_extensions.data();
+
         if ( m_enable_validation_layers ) {
             create_info.enabledLayerCount =
                 static_cast<uint32_t>( m_validation_layers.size() );
@@ -347,6 +355,7 @@ class HelloTriangleApp
         else {
             create_info.enabledLayerCount = 0;
         }
+
         if ( vkCreateDevice( m_physical_device, &create_info, nullptr,
                              &m_device )
              != VK_SUCCESS ) {
@@ -379,6 +388,9 @@ class HelloTriangleApp
 
         if ( message_severity
              >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ) {
+            // std::cerr << std::format( "{}: Validation layer - {}", time_str,
+            //                           p_callback_data->pMessage )
+            //           << std::endl;
             std::cerr << time_str << ": Validation layer - "
                       << p_callback_data->pMessage << std::endl;
         }
@@ -532,6 +544,93 @@ class HelloTriangleApp
         }
 
         return available_formats[0];
+    }
+    [[nodiscard]] VkPresentModeKHR choose_swap_present_mode(
+        const std::vector<VkPresentModeKHR> & available_present_modes ) {
+        for ( const auto & present_mode : available_present_modes ) {
+            if ( present_mode == VK_PRESENT_MODE_MAILBOX_KHR ) {
+                return present_mode;
+            }
+        }
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+    [[nodiscard]] VkExtent2D
+    choose_swap_extent( const VkSurfaceCapabilitiesKHR & capabilities ) {
+        if ( capabilities.currentExtent.width
+             != std::numeric_limits<std::uint32_t>::max() ) {
+            return capabilities.currentExtent;
+        }
+        else {
+            int width, height;
+            glfwGetFramebufferSize( m_window, &width, &height );
+
+            VkExtent2D actual_extent{
+                std::clamp( static_cast<std::uint32_t>( width ),
+                            capabilities.minImageExtent.width,
+                            capabilities.maxImageExtent.width ),
+                std::clamp( static_cast<std::uint32_t>( height ),
+                            capabilities.minImageExtent.height,
+                            capabilities.maxImageExtent.height )
+            };
+
+            return actual_extent;
+        }
+    }
+    void create_swap_chain() {
+        SwapChainSupportDetails swap_chain_support =
+            query_swapchain_support( m_physical_device, m_surface );
+
+        VkSurfaceFormatKHR surface_format =
+            choose_swap_surface_format( swap_chain_support.formats );
+        VkPresentModeKHR present_mode =
+            choose_swap_present_mode( swap_chain_support.present_modes );
+        VkExtent2D extent =
+            choose_swap_extent( swap_chain_support.capabilities );
+
+        std::uint32_t image_count{ std::clamp(
+            swap_chain_support.capabilities.minImageCount + 5,
+            swap_chain_support.capabilities.minImageCount,
+            swap_chain_support.capabilities.maxImageCount ) };
+
+        VkSwapchainCreateInfoKHR create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        create_info.surface = m_surface;
+        create_info.minImageCount = image_count;
+        create_info.imageFormat = surface_format.format;
+        create_info.imageColorSpace = surface_format.colorSpace;
+        create_info.imageExtent = extent;
+        create_info.imageArrayLayers = 1;
+        create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        QueueFamilyIndices indices = find_queue_families( m_physical_device );
+        std::uint32_t      queue_family_indices[] = { indices.graphics_family(),
+                                                      indices.present_family() };
+
+        if ( indices.graphics_family() != indices.present_family() ) {
+            create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            create_info.queueFamilyIndexCount = 2;
+            create_info.pQueueFamilyIndices = queue_family_indices;
+        }
+        else {
+            create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            create_info.queueFamilyIndexCount = 0;
+            create_info.pQueueFamilyIndices = nullptr;
+        }
+
+        create_info.preTransform =
+            swap_chain_support.capabilities.currentTransform;
+        create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+        create_info.presentMode = present_mode;
+        create_info.clipped = VK_TRUE;
+
+        create_info.oldSwapchain = VK_NULL_HANDLE;
+
+        if ( vkCreateSwapchainKHR( m_device, &create_info, nullptr,
+                                   &m_swapchain )
+             != VK_SUCCESS ) {
+            throw std::runtime_error( "Failed to create swapchain." );
+        }
     }
 };
 
