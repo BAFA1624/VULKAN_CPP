@@ -202,6 +202,7 @@ class HelloTriangleApp
     std::vector<VkImageView>        m_swapchain_image_views;
     VkFormat                        m_swapchain_image_format;
     VkExtent2D                      m_swapchain_extent;
+    VkPipelineLayout                m_pipeline_layout;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
@@ -231,6 +232,7 @@ class HelloTriangleApp
             create_logical_device();
             create_swap_chain();
             create_image_views();
+            create_render_pass();
             create_graphics_pipeline();
         }
         catch ( const std::exception & err ) {
@@ -242,6 +244,7 @@ class HelloTriangleApp
         while ( !glfwWindowShouldClose( m_window ) ) { glfwPollEvents(); }
     }
     void cleanup() {
+        vkDestroyPipelineLayout( m_device, m_pipeline_layout, nullptr );
         for ( auto image_view : m_swapchain_image_views ) {
             vkDestroyImageView( m_device, image_view, nullptr );
         }
@@ -810,10 +813,87 @@ class HelloTriangleApp
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
         rasterizer.depthBiasConstantFactor = 0.0f;
-        // rasterizer
+        rasterizer.depthBiasClamp = 0.0f;
+        rasterizer.depthBiasSlopeFactor = 0.0f;
+
+        // Multisampling (Disabled for now)
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.minSampleShading = 1.0f;
+        multisampling.pSampleMask = nullptr;
+        multisampling.alphaToCoverageEnable = VK_FALSE;
+        multisampling.alphaToOneEnable = VK_FALSE;
+
+        // Color blending
+        VkPipelineColorBlendAttachmentState color_blend_attachment{};
+        color_blend_attachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+            | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        color_blend_attachment.blendEnable = VK_FALSE;
+        color_blend_attachment.srcColorBlendFactor =
+            VK_BLEND_FACTOR_ONE; // Optional
+        color_blend_attachment.dstColorBlendFactor =
+            VK_BLEND_FACTOR_ZERO;                              // Optional
+        color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+        color_blend_attachment.srcAlphaBlendFactor =
+            VK_BLEND_FACTOR_ONE; // Optional
+        color_blend_attachment.dstAlphaBlendFactor =
+            VK_BLEND_FACTOR_ZERO;                              // Optional
+        color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+        VkPipelineColorBlendStateCreateInfo color_blend{};
+        color_blend.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        color_blend.logicOpEnable = VK_FALSE;
+        color_blend.logicOp = VK_LOGIC_OP_COPY;
+        color_blend.attachmentCount = 1;
+        color_blend.pAttachments = &color_blend_attachment;
+        color_blend.blendConstants[0] = 0.0f;
+        color_blend.blendConstants[1] = 0.0f;
+        color_blend.blendConstants[2] = 0.0f;
+        color_blend.blendConstants[3] = 0.0f;
+
+        // Pipeline layout
+
+        VkPipelineLayoutCreateInfo pipeline_layout_info{};
+        pipeline_layout_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipeline_layout_info.setLayoutCount = 0;
+        pipeline_layout_info.pSetLayouts = nullptr;
+        pipeline_layout_info.pushConstantRangeCount = 0;
+        pipeline_layout_info.pPushConstantRanges = nullptr;
+
+        if ( vkCreatePipelineLayout( m_device, &pipeline_layout_info, nullptr,
+                                     &m_pipeline_layout )
+             != VK_SUCCESS ) {
+            throw std::runtime_error( "Failed to create pipeline layout." );
+        }
 
         vkDestroyShaderModule( m_device, vert_shader_mod, nullptr );
         vkDestroyShaderModule( m_device, frag_shader_mod, nullptr );
+    }
+    void create_render_pass() {
+        VkAttachmentDescription color_attachment{};
+        color_attachment.format = m_swapchain_image_format;
+        color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference color_attachment_ref{};
+        color_attachment_ref.attachment = 0;
+        color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_attachment_ref;
     }
 };
 
