@@ -20,7 +20,48 @@
 
 #define NDEBUG
 
+// Helper functions
+
+static std::vector<char>
+read_file( const std::string_view filename ) {
+    std::ifstream file( filename.data(), std::ios::ate | std::ios::binary );
+    if ( !file.is_open() ) {
+        throw std::runtime_error( "Couldn't open file: "
+                                  + std::string{ filename } );
+    }
+
+    // Get filesize + buffer for file
+    const size_t      file_size = file.tellg();
+    std::vector<char> file_buffer( file_size );
+
+    // Start of file
+    file.seekg( 0 );
+    // Read contents
+    file.read( file_buffer.data(), file_size );
+
+    file.close();
+
+    return file_buffer;
+}
+
+VkShaderModule
+create_shader_module( const VkDevice device, const std::vector<char> & code ) {
+    VkShaderModuleCreateInfo create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    create_info.codeSize = code.size();
+    create_info.pCode = reinterpret_cast<const uint32_t *>( code.data() );
+
+    VkShaderModule shader_module{};
+    if ( vkCreateShaderModule( device, &create_info, nullptr, &shader_module )
+         != VK_SUCCESS ) {
+        throw std::runtime_error( "Failed to create shader module." );
+    }
+
+    return shader_module;
+}
+
 // External debug functions
+
 VkResult
 create_debug_utils_messenger_EXT(
     VkInstance                                 instance,
@@ -182,13 +223,20 @@ class HelloTriangleApp
             glfwCreateWindow( m_width, m_height, "Vulkan", nullptr, nullptr );
     }
     void init_vulkan() {
-        create_instance();
-        setup_debug_messenger();
-        create_surface();
-        pick_physical_device();
-        create_logical_device();
-        create_swap_chain();
-        create_image_views();
+        try {
+            create_instance();
+            setup_debug_messenger();
+            create_surface();
+            pick_physical_device();
+            create_logical_device();
+            create_swap_chain();
+            create_image_views();
+            create_graphics_pipeline();
+        }
+        catch ( const std::exception & err ) {
+            std::cerr << err.what() << std::endl;
+            return;
+        }
     }
     void main_loop() {
         while ( !glfwWindowShouldClose( m_window ) ) { glfwPollEvents(); }
@@ -367,7 +415,9 @@ class HelloTriangleApp
         if ( vkCreateDevice( m_physical_device, &create_info, nullptr,
                              &m_device )
              != VK_SUCCESS ) {
-            throw std::runtime_error( "Failed to create logical device." );
+            std::cerr << "Failed to create logical device." << std::endl;
+            exit( -1 );
+            // throw std::runtime_error( "Failed to create logical device." );
         }
 
         vkGetDeviceQueue( m_device, indices.graphics_family(), 0,
@@ -383,10 +433,10 @@ class HelloTriangleApp
         }
     }
     [[nodiscard]] static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT       message_severity,
-        VkDebugUtilsMessageTypeFlagsEXT              message_type,
-        const VkDebugUtilsMessengerCallbackDataEXT * p_callback_data,
-        void *                                       p_user_data ) noexcept {
+        VkDebugUtilsMessageSeverityFlagBitsEXT           message_severity,
+        [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT message_type,
+        const VkDebugUtilsMessengerCallbackDataEXT *     p_callback_data,
+        [[maybe_unused]] void * p_user_data ) noexcept {
         const time_t current_time{ time( NULL ) };
         const auto   time_str{ asctime( gmtime( &current_time ) ) };
 
@@ -396,9 +446,6 @@ class HelloTriangleApp
 
         if ( message_severity
              >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ) {
-            // std::cerr << std::format( "{}: Validation layer - {}", time_str,
-            //                           p_callback_data->pMessage )
-            //           << std::endl;
             std::cerr << time_str << ": Validation layer - "
                       << p_callback_data->pMessage << std::endl;
         }
@@ -425,7 +472,7 @@ class HelloTriangleApp
 
         return required_extensions.empty();
     }
-    [[nodiscard]] constexpr auto is_device_suitable( VkPhysicalDevice device ) {
+    [[nodiscard]] auto is_device_suitable( VkPhysicalDevice device ) {
         QueueFamilyIndices indices{ find_queue_families( device ) };
 
         const bool extensions_supported{ check_device_extension_support(
@@ -679,6 +726,94 @@ class HelloTriangleApp
                 throw std::runtime_error( "Failed to create image view." );
             }
         }
+    }
+    void create_graphics_pipeline() {
+        // Setting up shader modules
+        const auto vert_shader_code{ read_file( "shaders/triangle_vert.spv" ) };
+        const auto frag_shader_code{ read_file( "shaders/triangle_frag.spv" ) };
+
+        const auto vert_shader_mod =
+            create_shader_module( m_device, vert_shader_code );
+        const auto frag_shader_mod =
+            create_shader_module( m_device, frag_shader_code );
+
+        VkPipelineShaderStageCreateInfo vert_shader_create_info{};
+        vert_shader_create_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vert_shader_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vert_shader_create_info.module = vert_shader_mod;
+        vert_shader_create_info.pName = "main";
+
+        VkPipelineShaderStageCreateInfo frag_shader_create_info{};
+        frag_shader_create_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        frag_shader_create_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        frag_shader_create_info.module = frag_shader_mod;
+        frag_shader_create_info.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shader_stages[] = {
+            vert_shader_create_info, frag_shader_create_info
+        };
+
+        // Fixed functions
+
+        std::vector<VkDynamicState> dynamic_states{ VK_DYNAMIC_STATE_VIEWPORT,
+                                                    VK_DYNAMIC_STATE_SCISSOR };
+
+        VkPipelineDynamicStateCreateInfo dynamic_state_info{};
+        dynamic_state_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamic_state_info.dynamicStateCount =
+            static_cast<uint32_t>( dynamic_states.size() );
+        dynamic_state_info.pDynamicStates = dynamic_states.data();
+
+        VkPipelineVertexInputStateCreateInfo vertex_input_info{};
+        vertex_input_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertex_input_info.vertexBindingDescriptionCount = 0;
+        vertex_input_info.pVertexBindingDescriptions = nullptr;
+        vertex_input_info.vertexAttributeDescriptionCount = 0;
+        vertex_input_info.pVertexAttributeDescriptions = nullptr;
+
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly.primitiveRestartEnable = VK_FALSE;
+
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>( m_swapchain_extent.width );
+        viewport.height = static_cast<float>( m_swapchain_extent.height );
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+
+        VkRect2D scissor{};
+        scissor.offset = { 0, 0 };
+        scissor.extent = m_swapchain_extent;
+
+        VkPipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+        rasterizer.depthBiasConstantFactor = 0.0f;
+        // rasterizer
+
+        vkDestroyShaderModule( m_device, vert_shader_mod, nullptr );
+        vkDestroyShaderModule( m_device, frag_shader_mod, nullptr );
     }
 };
 

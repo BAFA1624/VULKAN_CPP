@@ -33,8 +33,42 @@ find_library(vulkan_lib vulkan REQUIRED HINTS ENV ${DLIB_PATH})
 # find_library(XRANDR Xrandr PATHS ${DLIB_PATH})
 # find_library(XI Xi PATHS ${DLIB_PATH})
 
-add_executable(check_setup src/check_setup.cpp)
-target_link_libraries(check_setup dl pthread ${vulkan_lib} ${GLM_LIBRARIES} glfw)
+set(CHECK_SETUP check_setup)
+
+add_executable(${CHECK_SETUP} src/check_setup.cpp)
+target_link_libraries(${CHECK_SETUP} dl pthread ${vulkan_lib} ${GLM_LIBRARIES} glfw)
+
+# add_custom_command(TARGET ${CHECK_SETUP})
+
+# Set up for target to compile shaders
+
+# Set shader compiler/validator
+set(GLSL_VALIDATOR glslc)
+
+# Find src files
+file(GLOB_RECURSE GLSL_SRC_FILES
+    "src/shaders/*.frag"
+    "src/shaders/*.vert"
+)
+
+# For each shader src file, compile glsl -> spirv
+foreach(GLSL ${GLSL_SRC_FILES})
+    #get_filename_component(FILE_NAME ${GLSL} NAME)
+    cmake_path(GET GLSL STEM LAST_ONLY FILE_NAME)
+    set(SPIRV "${PROJECT_BINARY_DIR}/shaders/${FILE_NAME}.spv")
+    add_custom_command(
+        OUTPUT ${SPIRV}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PROJECT_BINARY_DIR}/shaders/"
+        COMMAND ${GLSL_VALIDATOR} ${GLSL} -o ${SPIRV}
+        DEPENDS ${GLSL}
+    )
+    list(APPEND SPIRV_BINARY_FILES ${SPIRV})
+endforeach(GLSL)
+
+add_custom_target(
+    shaders
+    DEPENDS ${SPIRV_BINARY_FILES}
+)
 
 # Same here, linux stuff. At some point will work out some sort of select
 # for different OS's.
@@ -42,3 +76,5 @@ target_link_libraries(check_setup dl pthread ${vulkan_lib} ${GLM_LIBRARIES} glfw
 
 add_executable(hello_triangle src/hello_triangle.cpp)
 target_link_libraries(hello_triangle dl pthread ${vulkan_lib} ${GLM_LIBRARIES} glfw)
+
+add_dependencies(hello_triangle shaders)
