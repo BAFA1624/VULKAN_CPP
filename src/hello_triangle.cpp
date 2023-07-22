@@ -204,6 +204,7 @@ class HelloTriangleApp
     VkExtent2D                      m_swapchain_extent;
     VkRenderPass                    m_render_pass;
     VkPipelineLayout                m_pipeline_layout;
+    VkPipeline                      m_graphics_pipeline;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
         "VK_LAYER_KHRONOS_validation"
@@ -245,6 +246,7 @@ class HelloTriangleApp
         while ( !glfwWindowShouldClose( m_window ) ) { glfwPollEvents(); }
     }
     void cleanup() {
+        vkDestroyPipeline( m_device, m_graphics_pipeline, nullptr );
         vkDestroyPipelineLayout( m_device, m_pipeline_layout, nullptr );
         vkDestroyRenderPass( m_device, m_render_pass, nullptr );
         for ( auto image_view : m_swapchain_image_views ) {
@@ -872,6 +874,34 @@ class HelloTriangleApp
                                      &m_pipeline_layout )
              != VK_SUCCESS ) {
             throw std::runtime_error( "Failed to create pipeline layout." );
+        }
+
+        // vkDestroyShaderModule( m_device, vert_shader_mod, nullptr );
+        // vkDestroyShaderModule( m_device, frag_shader_mod, nullptr );
+
+        VkGraphicsPipelineCreateInfo pipeline_info{};
+        pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.stageCount = 2;
+        pipeline_info.pStages = shader_stages;
+        pipeline_info.pVertexInputState = &vertex_input_info;
+        pipeline_info.pInputAssemblyState = &input_assembly;
+        pipeline_info.pViewportState = &viewport_state;
+        pipeline_info.pRasterizationState = &rasterizer;
+        pipeline_info.pMultisampleState = &multisampling;
+        pipeline_info.pDepthStencilState = nullptr;
+        pipeline_info.pColorBlendState = &color_blend;
+        pipeline_info.pDynamicState = &dynamic_state_info;
+        pipeline_info.layout = m_pipeline_layout;
+        pipeline_info.renderPass = m_render_pass;
+        pipeline_info.subpass = 0;
+        pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+        pipeline_info.basePipelineIndex = -1;
+
+        if ( vkCreateGraphicsPipelines( m_device, VK_NULL_HANDLE, 1,
+                                        &pipeline_info, nullptr,
+                                        &m_graphics_pipeline )
+             != VK_SUCCESS ) {
+            throw std::runtime_error( "Failed to create graphics pipeline." );
         }
 
         vkDestroyShaderModule( m_device, vert_shader_mod, nullptr );
