@@ -202,6 +202,7 @@ class HelloTriangleApp
     std::vector<VkImageView>        m_swapchain_image_views;
     VkFormat                        m_swapchain_image_format;
     VkExtent2D                      m_swapchain_extent;
+    VkRenderPass                    m_render_pass;
     VkPipelineLayout                m_pipeline_layout;
     bool                            m_enable_validation_layers;
     const std::vector<const char *> m_validation_layers{
@@ -245,6 +246,7 @@ class HelloTriangleApp
     }
     void cleanup() {
         vkDestroyPipelineLayout( m_device, m_pipeline_layout, nullptr );
+        vkDestroyRenderPass( m_device, m_render_pass, nullptr );
         for ( auto image_view : m_swapchain_image_views ) {
             vkDestroyImageView( m_device, image_view, nullptr );
         }
@@ -894,6 +896,19 @@ class HelloTriangleApp
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &color_attachment_ref;
+
+        VkRenderPassCreateInfo render_pass_info{};
+        render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        render_pass_info.attachmentCount = 1;
+        render_pass_info.pAttachments = &color_attachment;
+        render_pass_info.subpassCount = 1;
+        render_pass_info.pSubpasses = &subpass;
+
+        if ( vkCreateRenderPass( m_device, &render_pass_info, nullptr,
+                                 &m_render_pass )
+             != VK_SUCCESS ) {
+            throw std::runtime_error( "Failed to create render pass." );
+        }
     }
 };
 
